@@ -18,7 +18,7 @@
 
 ## このC++実装の位置づけ
 
-- **参考プロトタイプ** 。本家はCmajorで作るので、ここで得た「気持ちいい方向性」やパラメータの連動感をCmajor側にフィードバックするのに使う。
+- **参考プロトタイプ** 
 - JUCE 7 (CMake FetchContent) で実装。VST3 + Standalone でビルド可能。
 - パラメータは5つ（APVTS使用）。GenericAudioProcessorEditorで即座に触れる。
 - DSPは「まず動いて、耳で判断できる」レベルを目標にしている。
