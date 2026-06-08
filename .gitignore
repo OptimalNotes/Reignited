@@ -1,0 +1,31 @@
+# Build output
+build/
+*_artefacts/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CMakeUserPresets.json
+
+# IDE / Visual Studio
+.vs/
+*.sln
+*.vcxproj*
+*.suo
+*.user
+*.opensdf
+*.sdf
+
+# Logs
+*.log
+
+# JUCE generated
+JuceLibraryCode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies (fetched by CMake)
+_deps/
