@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-14  # Using macOS 14 (Sonoma) for better compatibility with current JUCE; macos-latest (Sequoia 15+) may still have API issues even with JUCE 8. Can switch back after testing.
 
     steps:
     - name: Checkout
