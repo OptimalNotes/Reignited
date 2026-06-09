@@ -1,13 +1,13 @@
 # Reignited — C++ VST3 Reference Implementation
 
-このフォルダは「WebのGrokとCmajorで作っている本家プラグイン」の**C++参考実装** です。
+このフォルダは「WebのGrokとCmajorで作っている本家プラグイン」の**C++参考実装**です。
 
-いつもはGitHub上でCmajorコードを細かく仕様決めながら進めてるけど、「いきなりここでC++で動くものを作って参考にしたい」というリクエストで作りました。
+いつもはGitHub上でCmajorコードを細かく仕様決めしながら進めてるけど、「いきなりここでC++で動くものを作って参考にしたい」というリクエストで作りました。
 
 ## 現在のコンセプト（2026-06-08 妄想まとめより）
 
 - **プラグイン名**: Reignited
-- **コンセプト**: 「あの時の熱や勢いを取り戻す…かもしれない」エフェクター
+- **コンセプト**: 「あの時の熱や勢いを取り戻す……かもしれない」エフェクター
 - ギターやボーカルに挿して、ただEQをいじるだけで「なんかあの時の感じが戻ってきた」と思わせる。
 - 4バンドEQ（Low / Mid / High / Presence） + **5つ目のノブ「Reignited」** が本命。
 - Reignitedノブを回すと **EQの変化 + SSの強度（Long Glueなど） + MIX + 各帯域のGR感度** が連動して変化。
@@ -23,7 +23,7 @@
 - パラメータは5つ（APVTS使用）。GenericAudioProcessorEditorで即座に触れる。
 - DSPは「まず動いて、耳で判断できる」レベルを目標にしている。
 
-## 実装済みの主な行動（v0.2）
+## 実装済みの主な挙動（v0.2）
 
 - 4バンド・シリアルEQ with 3 modes:
   - Guitar (default): LowShelf 140Hz / Mid Peak 620Hz / HighShelf 2.8kHz / Presence Peak 5.8kHz
@@ -31,7 +31,7 @@
   - Mastering: LowShelf 90Hz / Mid Peak 420Hz / HighShelf 1.6kHz / Presence Peak 5.2kHz
 - Reignitedノブで以下のものが連動：
   - サチュレーション量（ドライブ + 軽い非対称波形整形 → even harmonics寄り）
-  - Long Glue（ゆっくりしたエンベロープフォロワーによる積やかなバスグルー） — now ms-based for any sample rate
+  - Long Glue（ゆっくりしたエンベロープフォロワーによる穏やかなバスグルー） — now ms-based for any sample rate
   - 自動的なEQ変化（Reignitedが上がるとMidを少しscooping、低域をtighten、Presenceをair寄りに）
   - 内部MIX（Reignitedが上がるほど「エフェクター」成分が増える）
 - Oversampling mode (4x when enabled) for the character engine
@@ -77,10 +77,26 @@ cmake --build build --config Release
 
 ```
 build\Reignited_artefacts\Release\Standalone\Reignited.exe   ← DAWなしで即テスト可能
-build\Reignited_artefacts\Release\VST3\Reignited.vst3   ← DAW用
 ```
 
 （この環境で先に試したところ、generatorエラーで止まったので、上記のC++ワークロード追加が必須です）
+
+### VST3を追加したいとき
+
+1. CMakeLists.txt を開いて `FORMATS Standalone` の行を以下のように変更:
+
+   ```cmake
+   FORMATS Standalone VST3
+   ```
+
+2. 再度構成＋ビルド:
+
+   ```powershell
+   cmake -G "Visual Studio 18 2026" -S . -B build
+   cmake --build build --config Release
+   ```
+
+   VST3 SDK が必要と言われたら、Steinbergの公式サイトから "VST3 SDK" をダウンロードしてパスを教えるか、JUCEが自動で扱えるようになるまで待つ（最近のJUCEは一部自動対応が進んでいる）。
 
 ### トラブルシューティング
 
@@ -89,7 +105,45 @@ build\Reignited_artefacts\Release\VST3\Reignited.vst3   ← DAW用
 - 「cl.exe が認識されません」→ Native Tools Command Prompt から実行するか、Developer Command Prompt for VS を起動してから cmake する。
 - Standaloneが起動しない → 依存DLLの問題は稀だが、Visual C++ Redistributable を最新にすると良い場合あり。
 
-まずは **Standalone** で音を出してReignitedノブをぐるぐる回してみるのが最短路ートです。
+まずは **Standalone** で音を出してReignitedノブをぐるぐる回してみるのが最短ルートです。
+
+## macOS ビルド（AU / VST3 / Standalone）
+
+AU (Audio Unit) は macOS 専用フォーマットです。VST3 と Standalone も macOS でビルド可能です。
+
+### 前提
+- macOS + Xcode (Command Line Tools もインストール: `xcode-select --install`)
+- CMake (Homebrew 推奨: `brew install cmake`)
+- Git
+
+### ビルド手順
+
+```bash
+git clone https://github.com/OptimalNotes/Reignited.git
+cd Reignited
+mkdir build && cd build
+
+# Xcode プロジェクトを生成
+cmake -G Xcode .. -DCMAKE_BUILD_TYPE=Release
+
+# ビルド（Xcode またはコマンドライン）
+cmake --build . --config Release
+```
+
+成功すると `Reignited_artefacts/Release/` 以下に以下が生成されます:
+- `Standalone/Reignited (Time).app` （テスト用アプリ）
+- `VST3/Reignited (Time).vst3` （VST3）
+- `AU/Reignited (Time).component` （AU – Logic, GarageBand などで使える）
+
+### AU を DAW で使う
+- `Reignited (Time).component` フォルダを `~/Library/Audio/Plug-Ins/Components/` にコピー。
+- DAW（Logic Pro など）を再起動してスキャン。
+- 初回は macOS のセキュリティで「開発元を許可」する必要がある場合あり（システム設定 → プライバシーとセキュリティ）。
+
+### 配布時の注意（友達に共有する場合）
+- AU/VST3 はコード署名 + notarization が必要（特に macOS 10.15 以降）。
+- シンプルにソースを共有して「Mac で自分でビルドしてね」と伝えるのが一番簡単。
+- 署名なしだと Gatekeeper にブロックされる可能性が高い。
 
 ## 使い方（テスト）
 
@@ -101,15 +155,15 @@ build\Reignited_artefacts\Release\VST3\Reignited.vst3   ← DAW用
 ## 今後の調整ポイント（本家Cmajorにフィードバックしたいこと）
 
 - EQの正確な周波数 / Q / フィルタ種類（Low/Mid/High/Presenceの最適値）
-- SS2 / Long Glue のより正確な「気持ちいい」行動の移植（Cmajorコードがあればここに参考として置きたい）
-- 各帯域ごとのGR感度の違いの強弱
+- SS2 / Long Glue のより正確な「気持ちいい」挙動の移植（Cmajorコードがあればここに参考として置きたい）
+- 各帯域ごとのGR感度の違いの強さ
 - カット方向の味（ブーストとのバランス）
 - もっと高次のオーバーサンプリングや多段サチュが必要か
 
 ## メモ
 
 - このコードは「いきなりC++で参考を作る」ためのもの。綺麗さより「耳で判断できる速さ」を優先。
-- Cmajor側で同じコンセプトを固めたら、またここでC++版を最新の行動に追従させるのもアリ。
+- Cmajor側で同じコンセプトを固めたら、またここでC++版を最新の挙動に追従させるのもアリ。
 - 質問・修正リクエスト・「この部分をもっとSS2っぽく」などの指示はいつでもどうぞ。
 
 ---
