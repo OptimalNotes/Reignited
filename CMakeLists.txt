@@ -7,7 +7,7 @@ include(FetchContent)
 FetchContent_Declare(
   juce
   GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
-  GIT_TAG        7.0.12   # Stable recent JUCE 7. Pin or change to master/8.x as needed.
+  GIT_TAG        8.0.4    # Updated for macOS 15+ compatibility (ScreenCaptureKit instead of deprecated CGWindowListCreateImage)
 )
 FetchContent_MakeAvailable(juce)
 
@@ -19,8 +19,9 @@ juce_add_plugin(Reignited
     BUNDLE_ID com.optimalnotes.reignited.time
     PLUGIN_MANUFACTURER_CODE OptN
     PLUGIN_CODE Rgni
-    # Now building both Standalone + VST3 so you can test properly in DAW.
-    FORMATS Standalone VST3
+    # Now building Standalone + VST3 + AU.
+    # AU (Audio Unit) is macOS-only. Build on Mac with Xcode to generate .component.
+    FORMATS Standalone VST3 AU
     PRODUCT_NAME "Reignited (Time)"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
