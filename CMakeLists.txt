@@ -15,9 +15,9 @@ FetchContent_MakeAvailable(juce)
 # set(JUCE_VST3_SDK_PATH "C:/path/to/VST3_SDK" CACHE PATH "Path to VST3 SDK")
 
 juce_add_plugin(Reignited
-    COMPANY_NAME "Reignited"
-    BUNDLE_ID com.reignited.plugin
-    PLUGIN_MANUFACTURER_CODE Rgni
+    COMPANY_NAME "Optimal Notes Music lab"
+    BUNDLE_ID com.optimalnotes.reignited
+    PLUGIN_MANUFACTURER_CODE OptN
     PLUGIN_CODE Rgni
     # Now building both Standalone + VST3 so you can test properly in DAW.
     FORMATS Standalone VST3

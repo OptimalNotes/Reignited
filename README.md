@@ -4,7 +4,7 @@
 
 いつもはGitHub上でCmajorコードを細かく仕様決めながら進めてるけど、「いきなりここでC++で動くものを作って参考にしたい」というリクエストで作りました。
 
-## 現在のコンセプト（2026-06-08 実想まとめより）
+## 現在のコンセプト（2026-06-08 妄想まとめより）
 
 - **プラグイン名**: Reignited
 - **コンセプト**: 「あの時の熱や勢いを取り戻す……かもしれない」エフェクター
@@ -12,26 +12,31 @@
 - 4バンドEQ（Low / Mid / High / Presence） + **5つ目のノブ「Reignited」** が本命。
 - Reignitedノブを回すと **EQの変化 + SSの強度（Long Glueなど） + MIX + 各帯域のGR感度** が連動して変化。
 - 中央付近（50%くらい）で既に「かかり過ぎの一歩手前」。70%以上で本格的にエフェクター領域に突入。
-- 用途は**ミック特化**（リアルタイム演奏は非優先）。
+- 用途は**ミックス特化**（リアルタイム演奏は非優先）。
 - SS2（またはSS1寄り）の「気持ちいい性格」をベースに、偶数次サチュやキラキラ感などを選択的に取り入れる。
 - EQフラットでもReignitedの位置で音が変わることを「味」として設計。
 
 ## このC++実装の位置づけ
 
-- **参考プロトタイプ** 
+- **参考プロトタイプ** 。本家はCmajorで作るので、ここで得た「気持ちいい方向性」やパラメータの連動感をCmajor側にフィードバックするのに使う。
 - JUCE 7 (CMake FetchContent) で実装。VST3 + Standalone でビルド可能。
 - パラメータは5つ（APVTS使用）。GenericAudioProcessorEditorで即座に触れる。
 - DSPは「まず動いて、耳で判断できる」レベルを目標にしている。
 
-## 実装済みの主な挙動（v0.1）
+## 実装済みの主な挙動（v0.2）
 
-- 4バンド・シリアルEQ（Low: LowShelf 140Hz / Mid: Peak (Bell) 620Hz / High: HighShelf 2.8kHz / Presence: Peak (Bell) 5.8kHz）
+- 4バンド・シリアルEQ with 3 modes:
+  - Guitar (default): LowShelf 140Hz / Mid Peak 620Hz / HighShelf 2.8kHz / Presence Peak 5.8kHz
+  - Bass: LowShelf 60Hz / Mid Peak 250Hz / HighShelf 850Hz / Presence Peak 3.2kHz
+  - Mastering: LowShelf 90Hz / Mid Peak 420Hz / HighShelf 1.6kHz / Presence Peak 5.2kHz
 - Reignitedノブで以下のものが連動：
   - サチュレーション量（ドライブ + 軽い非対称波形整形 → even harmonics寄り）
-  - Long Glue（ゆっくりしたエンベロープフォロワーによる積やかなバスグルー）
+  - Long Glue（ゆっくりしたエンベロープフォロワーによる積やかなバスグルー） — now ms-based for any sample rate
   - 自動的なEQ変化（Reignitedが上がるとMidを少しscooping、低域をtighten、Presenceをair寄りに）
   - 内部MIX（Reignitedが上がるほど「エフェクター」成分が増える）
-- ノブのカーブは「最初は緩やか → 0.55〜0.6以降で急に効きが強くなる」方向で調整してある。
+- Oversampling mode (4x when enabled) for the character engine
+- Output volume parameter (-12dB to +6dB)
+- ノブのカーブは「最初は緩やか → 0.55〜0.6以後で急に効きが強くなる」方向で調整してある。
 - ステレオ対応（L/Rで独立したフィルタ状態）。
 
 ## ビルド方法（Windows）
@@ -72,26 +77,10 @@ cmake --build build --config Release
 
 ```
 build\Reignited_artefacts\Release\Standalone\Reignited.exe   ← DAWなしで即テスト可能
+build\Reignited_artefacts\Release\VST3\Reignited.vst3   ← DAW用
 ```
 
 （この環境で先に試したところ、generatorエラーで止まったので、上記のC++ワークロード追加が必須です）
-
-### VST3を追加したいとき
-
-1. CMakeLists.txt を開いて `FORMATS Standalone` の行を以下のように変更:
-
-   ```cmake
-   FORMATS Standalone VST3
-   ```
-
-2. 再度構成＋ビルド:
-
-   ```powershell
-   cmake -G "Visual Studio 18 2026" -S . -B build
-   cmake --build build --config Release
-   ```
-
-   VST3 SDK が必要と言われたら、Steinbergの公式サイトから "VST3 SDK" をダウンロードしてパスを教えるか、JUCEが自動で扱えるようになるまで待つ（最近のJUCEは一部自動対応が進んでいる）。
 
 ### トラブルシューティング
 

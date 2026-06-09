@@ -58,9 +58,15 @@ private:
     juce::AudioParameterFloat* presenceParam= nullptr;
     juce::AudioParameterFloat* reignitedParam = nullptr; // THE knob
 
+    // New parameters
+    juce::AudioParameterChoice* modeParam = nullptr;       // Guitar / Bass / Mastering
+    juce::AudioParameterFloat* outputParam = nullptr;      // Output volume
+    juce::AudioParameterBool* oversamplingParam = nullptr; // Oversampling mode
+
     // Smoothed values (to avoid clicks)
     juce::SmoothedValue<float> lowGainSm, midGainSm, highGainSm, presenceGainSm;
     juce::SmoothedValue<float> reignitedSm;
+    juce::SmoothedValue<float> outputSm;
 
     // 4-band EQ filters (serial). We keep separate instances for L and R for correct stereo imaging.
     using Filter = juce::dsp::IIR::Filter<float>;
@@ -78,8 +84,12 @@ private:
     // Current sample rate
     double currentSampleRate = 44100.0;
 
-    // Helper to update EQ coefficients from smoothed gains + reignited influence
-    void updateEQFilters (float lowDB, float midDB, float highDB, float presDB, float reignited);
+    // Time-based glue coefficients (for ms-based lookahead, works at any sample rate)
+    float attackCoeff = 0.0f;
+    float releaseCoeff = 0.0f;
+
+    // Helper to update EQ coefficients from smoothed gains + reignited influence (mode selects Guitar/Bass/Mastering ranges)
+    void updateEQFilters (float lowDB, float midDB, float highDB, float presDB, float reignited, int mode);
 
     // The core "Reignited" character processor (saturation + glue + magic)
     float applyReignitedCharacter (float input, float reignited, float bandEmphasis);

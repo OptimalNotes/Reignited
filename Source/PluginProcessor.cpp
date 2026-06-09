@@ -24,7 +24,12 @@ ReignitedAudioProcessor::ReignitedAudioProcessor()
     presenceParam = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(ParamIDs::presence));
     reignitedParam= dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(ParamIDs::reignited));
 
+    modeParam = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter("mode"));
+    outputParam = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("output"));
+    oversamplingParam = dynamic_cast<juce::AudioParameterBool*>(apvts.getParameter("oversampling"));
+
     jassert (lowParam && midParam && highParam && presenceParam && reignitedParam);
+    jassert (modeParam && outputParam && oversamplingParam);
 
     // Prepare smoothers (fast enough for musical use, ~5-10ms)
     lowGainSm.reset(100);
@@ -50,6 +55,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout ReignitedAudioProcessor::cre
     // We will curve the internal response (slow at first, then steep after ~0.55-0.6)
     auto reignitedRange = Range { 0.0f, 1.0f, 0.001f };
 
+    // New params
+    juce::StringArray modeChoices { "Guitar", "Bass", "Mastering" };
+
+    // Output: -12dB to +6dB
+    auto outputRange = Range { 0.0f, 1.0f, 0.001f };
+    outputRange.setSkewForCentre (0.5f);
+
     return {
         std::make_unique<AudioParameterFloat> (ParamIDs::low,      "Low",      gainRange, 0.5f,
             AudioParameterFloatAttributes().withLabel ("dB")),
@@ -60,7 +72,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout ReignitedAudioProcessor::cre
         std::make_unique<AudioParameterFloat> (ParamIDs::presence, "Presence", gainRange, 0.5f,
             AudioParameterFloatAttributes().withLabel ("dB")),
         std::make_unique<AudioParameterFloat> (ParamIDs::reignited, "Reignited", reignitedRange, 0.0f,
-            AudioParameterFloatAttributes().withLabel ("%"))
+            AudioParameterFloatAttributes().withLabel ("%")),
+
+        // New
+        std::make_unique<AudioParameterChoice> ("mode", "Mode", modeChoices, 0),
+        std::make_unique<AudioParameterFloat> ("output", "Output", outputRange, 0.5f,
+            AudioParameterFloatAttributes().withLabel ("dB")),
+        std::make_unique<AudioParameterBool> ("oversampling", "Oversampling", true)
     };
 }
 
@@ -76,9 +94,10 @@ void ReignitedAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
     highGainSm.reset (sr, 0.008);
     presenceGainSm.reset (sr, 0.008);
     reignitedSm.reset (sr, 0.012);
+    outputSm.reset (sr, 0.05); // slow for master output volume
 
-    // Oversampling 2x for the non-linear stage (good enough for prototype)
-    oversampler = std::make_unique<juce::dsp::Oversampling<float>> (2, 1, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR);
+    // Oversampling for non-linear stage (user selectable)
+    oversampler = std::make_unique<juce::dsp::Oversampling<float>> (2, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR); // 4x for better quality
     oversampler->initProcessing ((size_t) samplesPerBlock);
 
     // Create fresh filters (L + R)
@@ -94,8 +113,14 @@ void ReignitedAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
 
     glueEnv = 0.0f;
 
-    // Prime the filters with current params
-    updateEQFilters (0.5f, 0.5f, 0.5f, 0.5f, 0.0f);
+    // Time-based glue (ms) for any sample rate (replaces old sample-based 16 sample lookahead)
+    float attackMs  = 5.0f;
+    float releaseMs = 200.0f; // long glue
+    attackCoeff  = 1.0f - std::exp (-1.0f / (attackMs  * 0.001f * sr));
+    releaseCoeff = 1.0f - std::exp (-1.0f / (releaseMs * 0.001f * sr));
+
+    // Prime the filters with current params (Guitar mode)
+    updateEQFilters (0.5f, 0.5f, 0.5f, 0.5f, 0.0f, 0);
 }
 
 void ReignitedAudioProcessor::releaseResources()
@@ -130,6 +155,8 @@ void ReignitedAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     const float highRaw  = highParam->get();
     const float presRaw  = presenceParam->get();
     const float reignRaw = reignitedParam->get();
+    const float outputRaw = outputParam ? outputParam->get() : 0.5f;
+    const bool useOS = oversamplingParam ? oversamplingParam->get() : true;
 
     // Smooth them
     lowGainSm.setTargetValue (lowRaw);
@@ -138,92 +165,150 @@ void ReignitedAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     presenceGainSm.setTargetValue (presRaw);
     reignitedSm.setTargetValue (reignRaw);
 
-    // Update filters occasionally (not every sample, but we do it every block for simplicity + safety)
-    // In a tighter version we would only update when a param actually changed.
+    float outputDB = juce::jmap (outputRaw, 0.0f, 1.0f, -12.0f, 6.0f);
+    outputSm.setTargetValue (outputDB);
+
+    // Update filters (block rate) with current mode
+    int currentMode = modeParam ? modeParam->getIndex() : 0;
     updateEQFilters (lowGainSm.getCurrentValue(),
                      midGainSm.getCurrentValue(),
                      highGainSm.getCurrentValue(),
                      presenceGainSm.getCurrentValue(),
-                     reignitedSm.getCurrentValue());
+                     reignitedSm.getCurrentValue(),
+                     currentMode);
 
     // --- Main processing ---
-    // We process the "EQ tone" first (serial), then feed into the Reignited character engine.
-    // NOTE: We maintain separate filter states for left and right for proper stereo.
+    // Save dry (original input) and post-EQ wet for later character + mix + output
+    juce::AudioBuffer<float> dryBuffer (numChannels, numSamples);
+    juce::AudioBuffer<float> wetBuffer (numChannels, numSamples);
+
+    std::vector<float> reiSamples (numSamples);
+    std::vector<float> emphSamples (numSamples);
+    std::vector<float> mixSamples (numSamples);
+    std::vector<float> outGainSamples (numSamples);
 
     auto* left  = buffer.getWritePointer (0);
     auto* right = (numChannels > 1) ? buffer.getWritePointer (1) : nullptr;
 
-    const float mixBase = juce::jmap (reignitedSm.getCurrentValue(), 0.0f, 1.0f, 0.0f, 0.92f); // more wet as reignited rises
+    const float mixBase = juce::jmap (reignitedSm.getCurrentValue(), 0.0f, 1.0f, 0.0f, 0.92f);
 
     for (int i = 0; i < numSamples; ++i)
     {
-        // Advance smoothers every sample (required for correct smoothing behavior).
-        // We only actually *use* mG (for band emphasis) and rei (for character amount) inside the loop.
+        // Advance ALL smoothers every sample
         const float lG [[maybe_unused]] = lowGainSm.getNextValue();
         const float mG = midGainSm.getNextValue();
         const float hG [[maybe_unused]] = highGainSm.getNextValue();
         const float pG [[maybe_unused]] = presenceGainSm.getNextValue();
         const float rei = reignitedSm.getNextValue();
-
-        // (EQ coefficients are updated at block rate in updateEQFilters using the smoothed targets.
-        // We no longer need per-sample dB values here.)
-
-        // We already updated coefficients in updateEQFilters using the *smoothed target*,
-        // but for per-sample we re-use the last coefficients (filters are stateful).
+        const float outDBThis = outputSm.getNextValue();
 
         float dryL = left[i];
         float dryR = right ? right[i] : dryL;
 
-        // --- EQ stage (serial, classic "tone" chain) ---
-        // Left channel filters
-        float wetL = lowFilterL->processSample (dryL);
-        wetL = midFilterL->processSample (wetL);
-        wetL = highFilterL->processSample (wetL);
-        wetL = presenceFilterL->processSample (wetL);
+        dryBuffer.setSample (0, i, dryL);
+        if (right) dryBuffer.setSample (1, i, dryR);
 
-        // Right channel filters (independent state)
-        float wetR = dryR;
+        // EQ stage (serial)
+        float postL = lowFilterL->processSample (dryL);
+        postL = midFilterL->processSample (postL);
+        postL = highFilterL->processSample (postL);
+        postL = presenceFilterL->processSample (postL);
+
+        float postR = dryR;
         if (right)
         {
-            wetR = lowFilterR->processSample (dryR);
-            wetR = midFilterR->processSample (wetR);
-            wetR = highFilterR->processSample (wetR);
-            wetR = presenceFilterR->processSample (wetR);
+            postR = lowFilterR->processSample (dryR);
+            postR = midFilterR->processSample (postR);
+            postR = highFilterR->processSample (postR);
+            postR = presenceFilterR->processSample (postR);
         }
         else
         {
-            wetR = wetL;
+            postR = postL;
         }
 
-        // --- Reignited character engine (the fun part) ---
-        // We apply slightly different emphasis to L/R for stereo width feel, but keep it simple.
-        const float bandEmphasisL = 1.0f + (mG - 0.5f) * 0.6f; // mid gain influences how much "push" into sat
-        const float bandEmphasisR = 1.0f + (mG - 0.5f) * 0.6f;
+        wetBuffer.setSample (0, i, postL);
+        if (right) wetBuffer.setSample (1, i, postR);
 
-        wetL = applyReignitedCharacter (wetL, rei, bandEmphasisL);
-        wetR = applyReignitedCharacter (wetR, rei, bandEmphasisR);
-
-        // Parallel mix (dry tone EQ vs the full Reignited effector sound)
-        const float mix = juce::jlimit (0.0f, 0.98f, mixBase + (rei - 0.5f) * 0.04f); // extra wet at high end
-        left[i]  = dryL + (wetL - dryL) * mix;
-        if (right)
-            right[i] = dryR + (wetR - dryR) * mix;
+        // Save per-sample values for character / mix / output
+        reiSamples[i] = rei;
+        emphSamples[i] = 1.0f + (mG - 0.5f) * 0.6f;
+        const float mix = juce::jlimit (0.0f, 0.98f, mixBase + (rei - 0.5f) * 0.04f);
+        mixSamples[i] = mix;
+        outGainSamples[i] = juce::Decibels::decibelsToGain (outDBThis);
     }
 
-    // Optional: very gentle global limiter at extreme settings (safety)
+    // --- Reignited character engine (with optional oversampling) ---
+    float blockRei = reignitedSm.getCurrentValue();
+    float blockMG = midGainSm.getCurrentValue();
+    float blockEmph = 1.0f + (blockMG - 0.5f) * 0.6f;
+
+    if (useOS && oversampler)
+    {
+        juce::dsp::AudioBlock<float> wetBlock (wetBuffer);
+        auto upBlock = oversampler->processSamplesUp (wetBlock);
+
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            float* data = upBlock.getChannelPointer (ch);
+            const size_t upSamps = upBlock.getNumSamples();
+            for (size_t s = 0; s < upSamps; ++s)
+            {
+                data[s] = applyReignitedCharacter (data[s], blockRei, blockEmph);
+            }
+        }
+
+        oversampler->processSamplesDown (wetBlock);
+    }
+    else
+    {
+        // No OS: per-sample character using saved rei/emph
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float wL = wetBuffer.getSample (0, i);
+            wL = applyReignitedCharacter (wL, reiSamples[i], emphSamples[i]);
+            wetBuffer.setSample (0, i, wL);
+
+            if (right)
+            {
+                float wR = wetBuffer.getSample (1, i);
+                wR = applyReignitedCharacter (wR, reiSamples[i], emphSamples[i]);
+                wetBuffer.setSample (1, i, wR);
+            }
+        }
+    }
+
+    // --- Parallel mix + Output volume ---
+    for (int i = 0; i < numSamples; ++i)
+    {
+        float dryL = dryBuffer.getSample (0, i);
+        float procL = wetBuffer.getSample (0, i);
+        left[i] = dryL + (procL - dryL) * mixSamples[i];
+        left[i] *= outGainSamples[i];
+
+        if (right)
+        {
+            float dryR = dryBuffer.getSample (1, i);
+            float procR = wetBuffer.getSample (1, i);
+            right[i] = dryR + (procR - dryR) * mixSamples[i];
+            right[i] *= outGainSamples[i];
+        }
+    }
+
+    // Safety limiter for extreme settings
     if (reignitedSm.getCurrentValue() > 0.85f)
     {
         for (int ch = 0; ch < numChannels; ++ch)
         {
             auto* d = buffer.getWritePointer (ch);
             for (int i = 0; i < numSamples; ++i)
-                d[i] = juce::jlimit (-1.5f, 1.5f, d[i]); // soft safety, real limiting would be better
+                d[i] = juce::jlimit (-1.5f, 1.5f, d[i]);
         }
     }
 }
 
 //==============================================================================
-void ReignitedAudioProcessor::updateEQFilters (float low01, float mid01, float high01, float pres01, float reignited01)
+void ReignitedAudioProcessor::updateEQFilters (float low01, float mid01, float high01, float pres01, float reignited01, int mode)
 {
     const double sr = currentSampleRate;
     if (sr <= 0.0) return;
@@ -254,28 +339,55 @@ void ReignitedAudioProcessor::updateEQFilters (float low01, float mid01, float h
     // High shelf extra bite
     highDB += juce::jmax (0.0f, (r - 0.55f) * 0.9f) * 5.5f;
 
-    // === Filter coefficients (musical starting points for guitar/vocal "character") ===
-    // These numbers are chosen by ear for "気持ちいい" starting point. Tweak freely.
+    // === Filter coefficients based on MODE (Guitar / Bass / Mastering) ===
+    // Guitar: current (guitar/vocal focused)
+    // Bass: lower frequencies typical for bass guitar
+    // Mastering: balanced 4-band mastering EQ ranges
+    float lowBase = 140.0f, midBase = 620.0f, highBase = 2800.0f, presBase = 5800.0f;
+    float midQ = 0.85f, presQ = 1.35f;
+
+    switch (mode)
+    {
+        case 1: // Bass mode
+            lowBase = 60.0f;
+            midBase = 250.0f;
+            highBase = 850.0f;
+            presBase = 3200.0f;
+            midQ = 0.75f;
+            presQ = 1.0f;
+            break;
+        case 2: // Mastering mode (nice 4-band mastering ranges)
+            lowBase = 90.0f;
+            midBase = 420.0f;
+            highBase = 1600.0f;
+            presBase = 5200.0f;
+            midQ = 0.65f;
+            presQ = 0.9f;
+            break;
+        default: // Guitar (0)
+            break;
+    }
+
     const float gL = juce::Decibels::decibelsToGain (lowDB);
     const float gM = juce::Decibels::decibelsToGain (midDB);
     const float gH = juce::Decibels::decibelsToGain (highDB);
     const float gP = juce::Decibels::decibelsToGain (presDB);
 
-    // Low: LowShelf around 140Hz
-    lowFilterL->coefficients = juce::dsp::IIR::Coefficients<float>::makeLowShelf (sr, 140.0f, 0.7f, gL);
-    lowFilterR->coefficients = juce::dsp::IIR::Coefficients<float>::makeLowShelf (sr, 140.0f, 0.7f, gL);
+    // Low: LowShelf
+    lowFilterL->coefficients = juce::dsp::IIR::Coefficients<float>::makeLowShelf (sr, lowBase, 0.7f, gL);
+    lowFilterR->coefficients = juce::dsp::IIR::Coefficients<float>::makeLowShelf (sr, lowBase, 0.7f, gL);
 
-    // Mid: gentle bell around 620Hz (boxy/muddy control + body)
-    midFilterL->coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sr, 620.0f, 0.85f, gM);
-    midFilterR->coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sr, 620.0f, 0.85f, gM);
+    // Mid: Peak (Bell)
+    midFilterL->coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sr, midBase, midQ, gM);
+    midFilterR->coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sr, midBase, midQ, gM);
 
-    // High: HighShelf ~2.8kHz (bite / edge)
-    highFilterL->coefficients = juce::dsp::IIR::Coefficients<float>::makeHighShelf (sr, 2800.0f, 0.6f, gH);
-    highFilterR->coefficients = juce::dsp::IIR::Coefficients<float>::makeHighShelf (sr, 2800.0f, 0.6f, gH);
+    // High: HighShelf
+    highFilterL->coefficients = juce::dsp::IIR::Coefficients<float>::makeHighShelf (sr, highBase, 0.6f, gH);
+    highFilterR->coefficients = juce::dsp::IIR::Coefficients<float>::makeHighShelf (sr, highBase, 0.6f, gH);
 
-    // Presence: upper presence / air, 5.8kHz
-    presenceFilterL->coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sr, 5800.0f, 1.35f, gP);
-    presenceFilterR->coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sr, 5800.0f, 1.35f, gP);
+    // Presence: Peak (Bell)
+    presenceFilterL->coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sr, presBase, presQ, gP);
+    presenceFilterR->coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sr, presBase, presQ, gP);
 }
 
 //==============================================================================
@@ -333,17 +445,14 @@ float ReignitedAudioProcessor::applyReignitedCharacter (float input, float reign
     // "Long Glue" / bus glue stage
     // Very slow envelope follower + gentle gain reduction.
     // This is the part that "まとめる" the energy and gives cohesion.
-    // Attack is relatively fast so transients still poke through a little.
-    // Release is deliberately long.
+    // Now uses ms-based coefficients (set in prepareToPlay) for any sample rate.
     // -----------------------------------------------------------------------
-    const float absIn   = std::abs (shaped);
-    constexpr float attack  = 0.0008f;   // ~ a few ms at 44.1k
-    constexpr float release = 0.00065f;  // slower → "long" glue character
+    const float absIn = std::abs (shaped);
 
     if (absIn > glueEnv)
-        glueEnv = glueEnv * (1.0f - attack)  + absIn * attack;
+        glueEnv = glueEnv * (1.0f - attackCoeff)  + absIn * attackCoeff;
     else
-        glueEnv = glueEnv * (1.0f - release) + absIn * release;
+        glueEnv = glueEnv * (1.0f - releaseCoeff) + absIn * releaseCoeff;
 
     // Stronger glue reaction (more obvious "まとまり" when Reignited is high)
     constexpr float glueThresh = 0.68f;
