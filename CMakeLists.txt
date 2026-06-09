@@ -7,7 +7,7 @@ include(FetchContent)
 FetchContent_Declare(
   juce
   GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
-  GIT_TAG        8.0.4    # Updated for macOS 15+ compatibility (ScreenCaptureKit instead of deprecated CGWindowListCreateImage)
+  GIT_TAG        8.0.6    # Updated for macOS 15+ compatibility (ScreenCaptureKit instead of deprecated CGWindowListCreateImage)
 )
 FetchContent_MakeAvailable(juce)
 
@@ -67,6 +67,12 @@ target_link_libraries(Reignited
 # Help with Japanese comments / source encoding on Japanese Windows (code page 932).
 # Without this you get C4819 warnings or worse.
 target_compile_options(Reignited PRIVATE /utf-8)
+
+# Suppress deprecation errors from JUCE on macOS 15+ (for CGWindowListCreateImage etc. in older parts)
+# Proper fix is newer JUCE, but this allows build to succeed.
+if(APPLE)
+  target_compile_options(Reignited PRIVATE -Wno-error=unavailable-declarations)
+endif()
 
 
 # For faster iteration during prototype: use the built-in Generic editor
