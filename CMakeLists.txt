@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.22)
 
+# Suppress deprecation errors from JUCE on macOS 15+ (CGWindowListCreateImage etc.)
+# Must be set early so it affects JUCE's own compilation during FetchContent.
+if(APPLE)
+  add_compile_options(-Wno-error=unavailable-declarations)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum OS X deployment version" FORCE)
+endif()
+
 project(Reignited VERSION 0.1.0)
 
 # JUCE framework (fetched automatically)
@@ -67,12 +74,6 @@ target_link_libraries(Reignited
 # Help with Japanese comments / source encoding on Japanese Windows (code page 932).
 # Without this you get C4819 warnings or worse.
 target_compile_options(Reignited PRIVATE /utf-8)
-
-# Suppress deprecation errors from JUCE on macOS 15+ (for CGWindowListCreateImage etc. in older parts)
-# Proper fix is newer JUCE, but this allows build to succeed.
-if(APPLE)
-  target_compile_options(Reignited PRIVATE -Wno-error=unavailable-declarations)
-endif()
 
 
 # For faster iteration during prototype: use the built-in Generic editor
