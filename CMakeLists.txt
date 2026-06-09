@@ -16,12 +16,12 @@ FetchContent_MakeAvailable(juce)
 
 juce_add_plugin(Reignited
     COMPANY_NAME "Optimal Notes Music lab"
-    BUNDLE_ID com.optimalnotes.reignited
+    BUNDLE_ID com.optimalnotes.reignited.time
     PLUGIN_MANUFACTURER_CODE OptN
     PLUGIN_CODE Rgni
     # Now building both Standalone + VST3 so you can test properly in DAW.
     FORMATS Standalone VST3
-    PRODUCT_NAME "Reignited"
+    PRODUCT_NAME "Reignited (Time)"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE

@@ -7,7 +7,7 @@
 ## 現在のコンセプト（2026-06-08 妄想まとめより）
 
 - **プラグイン名**: Reignited
-- **コンセプト**: 「あの時の熱や勢いを取り戻す……かもしれない」エフェクター
+- **コンセプト**: 「あの時の熱や勢いを取り戻す…かもしれない」エフェクター
 - ギターやボーカルに挿して、ただEQをいじるだけで「なんかあの時の感じが戻ってきた」と思わせる。
 - 4バンドEQ（Low / Mid / High / Presence） + **5つ目のノブ「Reignited」** が本命。
 - Reignitedノブを回すと **EQの変化 + SSの強度（Long Glueなど） + MIX + 各帯域のGR感度** が連動して変化。
@@ -23,7 +23,7 @@
 - パラメータは5つ（APVTS使用）。GenericAudioProcessorEditorで即座に触れる。
 - DSPは「まず動いて、耳で判断できる」レベルを目標にしている。
 
-## 実装済みの主な挙動（v0.2）
+## 実装済みの主な行動（v0.2）
 
 - 4バンド・シリアルEQ with 3 modes:
   - Guitar (default): LowShelf 140Hz / Mid Peak 620Hz / HighShelf 2.8kHz / Presence Peak 5.8kHz
@@ -36,7 +36,7 @@
   - 内部MIX（Reignitedが上がるほど「エフェクター」成分が増える）
 - Oversampling mode (4x when enabled) for the character engine
 - Output volume parameter (-12dB to +6dB)
-- ノブのカーブは「最初は緩やか → 0.55〜0.6以後で急に効きが強くなる」方向で調整してある。
+- ノブのカーブは「最初は緩やか → 0.55〜0.6以降で急に効きが強くなる」方向で調整してある。
 - ステレオ対応（L/Rで独立したフィルタ状態）。
 
 ## ビルド方法（Windows）
@@ -101,7 +101,7 @@ build\Reignited_artefacts\Release\VST3\Reignited.vst3   ← DAW用
 ## 今後の調整ポイント（本家Cmajorにフィードバックしたいこと）
 
 - EQの正確な周波数 / Q / フィルタ種類（Low/Mid/High/Presenceの最適値）
-- SS2 / Long Glue のより正確な「気持ちいい」挙動の移植（Cmajorコードがあればここに参考として置きたい）
+- SS2 / Long Glue のより正確な「気持ちいい」行動の移植（Cmajorコードがあればここに参考として置きたい）
 - 各帯域ごとのGR感度の違いの強弱
 - カット方向の味（ブーストとのバランス）
 - もっと高次のオーバーサンプリングや多段サチュが必要か
@@ -109,7 +109,7 @@ build\Reignited_artefacts\Release\VST3\Reignited.vst3   ← DAW用
 ## メモ
 
 - このコードは「いきなりC++で参考を作る」ためのもの。綺麗さより「耳で判断できる速さ」を優先。
-- Cmajor側で同じコンセプトを固めたら、またここでC++版を最新の挙動に追従させるのもアリ。
+- Cmajor側で同じコンセプトを固めたら、またここでC++版を最新の行動に追従させるのもアリ。
 - 質問・修正リクエスト・「この部分をもっとSS2っぽく」などの指示はいつでもどうぞ。
 
 ---

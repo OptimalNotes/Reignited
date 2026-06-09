@@ -5,7 +5,7 @@
 /**
  * Reignited
  *
- * 「あの時の熱や勢いを取り戻す……かもしれない」エフェクター。
+ * 「あの時の熱や勢いを取り戻す…かもしれない」エフェクター。
  * 4バンドEQ + 5つ目の "Reignited" ノブで、EQから本格的なキャラクターエフェクターへ性格が変化する。
  *
  * このC++実装は、WebのGrok + Cmajor で作っている本家プラグインの「参考実装」としてここに置く。
@@ -84,15 +84,32 @@ private:
     // Current sample rate
     double currentSampleRate = 44100.0;
 
-    // Time-based glue coefficients (for ms-based lookahead, works at any sample rate)
+    // Time-based glue coefficients (for ms-based Long Glue)
     float attackCoeff = 0.0f;
     float releaseCoeff = 0.0f;
+
+    // Lookahead buffers for dynamic saturation movement (per channel for correct stereo)
+    // Time-based (fixed ms) for high sample rate compatibility.
+    std::vector<float> laBufferL;
+    std::vector<float> laBufferR;
+    int laIndexL = 0;
+    int laIndexR = 0;
+    float laPeakSmL = 0.0f;
+    float laPeakSmR = 0.0f;
+    int currentLaSamples = 0;
+
+    // Dry delay lines (per channel) to align dry with the delayed character wet in the final mix.
+    // This eliminates the comb-filter / reverb-like artifact when turning EQ knobs.
+    std::vector<float> dryDelayL;
+    std::vector<float> dryDelayR;
+    int dryDelayPos = 0;
 
     // Helper to update EQ coefficients from smoothed gains + reignited influence (mode selects Guitar/Bass/Mastering ranges)
     void updateEQFilters (float lowDB, float midDB, float highDB, float presDB, float reignited, int mode);
 
     // The core "Reignited" character processor (saturation + glue + magic)
-    float applyReignitedCharacter (float input, float reignited, float bandEmphasis);
+    // dynDrive is pre-computed from lookahead peak (per channel in caller)
+    float applyReignitedCharacter (float input, float dynDrive, float glueAmt, float r, float bandEmphasis);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ReignitedAudioProcessor)
 };

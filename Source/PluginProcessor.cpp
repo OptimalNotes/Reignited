@@ -113,11 +113,25 @@ void ReignitedAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
 
     glueEnv = 0.0f;
 
-    // Time-based glue (ms) for any sample rate (replaces old sample-based 16 sample lookahead)
+    // Time-based glue (ms) for any sample rate
     float attackMs  = 5.0f;
     float releaseMs = 200.0f; // long glue
     attackCoeff  = 1.0f - std::exp (-1.0f / (attackMs  * 0.001f * sr));
     releaseCoeff = 1.0f - std::exp (-1.0f / (releaseMs * 0.001f * sr));
+
+    // Time-based lookahead for dynamic saturation (fixed time in ms)
+    // This keeps the "hysteresis illusion" duration consistent at high sample rates.
+    // The buffer size (currentLaSamples) is recalculated whenever sample rate changes.
+    constexpr float lookaheadMs = 0.5f;   // short lookahead, tune as needed (0.3~1.0 ms typical)
+    currentLaSamples = std::max(2, static_cast<int>(lookaheadMs * 0.001 * sr + 0.5));
+    laBufferL.assign(currentLaSamples, 0.0f);
+    laBufferR.assign(currentLaSamples, 0.0f);
+    laIndexL = laIndexR = 0;
+    laPeakSmL = laPeakSmR = 0.0f;
+
+    dryDelayL.assign(currentLaSamples, 0.0f);
+    dryDelayR.assign(currentLaSamples, 0.0f);
+    dryDelayPos = 0;
 
     // Prime the filters with current params (Guitar mode)
     updateEQFilters (0.5f, 0.5f, 0.5f, 0.5f, 0.0f, 0);
@@ -205,8 +219,16 @@ void ReignitedAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         float dryL = left[i];
         float dryR = right ? right[i] : dryL;
 
-        dryBuffer.setSample (0, i, dryL);
-        if (right) dryBuffer.setSample (1, i, dryR);
+        // Feed live dry to dry delay ring for aligned mix (prevents reverb/comb from character lookahead delay)
+        dryDelayL[dryDelayPos] = dryL;
+        dryDelayR[dryDelayPos] = dryR;
+        int dryReadPos = (dryDelayPos - currentLaSamples + currentLaSamples) % currentLaSamples;
+        float delDryL = dryDelayL[dryReadPos];
+        float delDryR = right ? dryDelayR[dryReadPos] : delDryL;
+        dryDelayPos = (dryDelayPos + 1) % currentLaSamples;
+
+        dryBuffer.setSample (0, i, delDryL);
+        if (right) dryBuffer.setSample (1, i, delDryR);
 
         // EQ stage (serial)
         float postL = lowFilterL->processSample (dryL);
@@ -230,6 +252,12 @@ void ReignitedAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         wetBuffer.setSample (0, i, postL);
         if (right) wetBuffer.setSample (1, i, postR);
 
+        // Feed live post to per-channel la rings for character lookahead (stereo correct)
+        laBufferL[laIndexL] = postL;
+        laIndexL = (laIndexL + 1) % currentLaSamples;
+        laBufferR[laIndexR] = postR;
+        laIndexR = (laIndexR + 1) % currentLaSamples;
+
         // Save per-sample values for character / mix / output
         reiSamples[i] = rei;
         emphSamples[i] = 1.0f + (mG - 0.5f) * 0.6f;
@@ -242,19 +270,26 @@ void ReignitedAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     float blockRei = reignitedSm.getCurrentValue();
     float blockMG = midGainSm.getCurrentValue();
     float blockEmph = 1.0f + (blockMG - 0.5f) * 0.6f;
+    float blockGlueAmt = juce::jmap (blockRei, 0.0f, 1.0f, 0.0f, 0.95f);
 
     if (useOS && oversampler)
     {
         juce::dsp::AudioBlock<float> wetBlock (wetBuffer);
         auto upBlock = oversampler->processSamplesUp (wetBlock);
 
+        // Use block level dynDrive from laPeakSm (fed at base rate in first loop)
+        float driveBase = juce::jmap (blockRei, 0.0f, 1.0f, 0.7f, 7.5f);
+        float dynDriveL = driveBase * (0.85f + blockEmph * 0.7f) * (1.0f + 0.6f * laPeakSmL);
+        float dynDriveR = driveBase * (0.85f + blockEmph * 0.7f) * (1.0f + 0.6f * laPeakSmR);
+
         for (int ch = 0; ch < numChannels; ++ch)
         {
             float* data = upBlock.getChannelPointer (ch);
             const size_t upSamps = upBlock.getNumSamples();
+            float dDrive = (ch == 0 ? dynDriveL : dynDriveR);
             for (size_t s = 0; s < upSamps; ++s)
             {
-                data[s] = applyReignitedCharacter (data[s], blockRei, blockEmph);
+                data[s] = applyReignitedCharacter (data[s], dDrive, blockGlueAmt, blockRei, blockEmph);
             }
         }
 
@@ -263,16 +298,20 @@ void ReignitedAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     else
     {
         // No OS: per-sample character using saved rei/emph
+        // dynDrive modulated from the laPeakSm (updated in first loop with live post)
         for (int i = 0; i < numSamples; ++i)
         {
+            float driveL = juce::jmap (reiSamples[i], 0.0f, 1.0f, 0.7f, 7.5f);
+            float dynDriveL = driveL * (0.85f + emphSamples[i] * 0.7f) * (1.0f + 0.6f * laPeakSmL);
             float wL = wetBuffer.getSample (0, i);
-            wL = applyReignitedCharacter (wL, reiSamples[i], emphSamples[i]);
+            wL = applyReignitedCharacter (wL, dynDriveL, blockGlueAmt, reiSamples[i], emphSamples[i]);
             wetBuffer.setSample (0, i, wL);
 
             if (right)
             {
+                float dynDriveR = driveL * (0.85f + emphSamples[i] * 0.7f) * (1.0f + 0.6f * laPeakSmR);
                 float wR = wetBuffer.getSample (1, i);
-                wR = applyReignitedCharacter (wR, reiSamples[i], emphSamples[i]);
+                wR = applyReignitedCharacter (wR, dynDriveR, blockGlueAmt, reiSamples[i], emphSamples[i]);
                 wetBuffer.setSample (1, i, wR);
             }
         }
@@ -295,15 +334,15 @@ void ReignitedAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         }
     }
 
-    // Safety limiter for extreme settings
-    if (reignitedSm.getCurrentValue() > 0.85f)
+    // Safety limiter to prevent extreme output levels (hundreds of amplitude possible
+    // during fast Reignited knob turns before glue compresses, or with hot input + max boosts).
+    // This can cause DAWs like Studio One to deactivate the plugin with "invalid data generated".
+    // Always active with reasonable headroom. Original design had it only at high r.
+    for (int ch = 0; ch < numChannels; ++ch)
     {
-        for (int ch = 0; ch < numChannels; ++ch)
-        {
-            auto* d = buffer.getWritePointer (ch);
-            for (int i = 0; i < numSamples; ++i)
-                d[i] = juce::jlimit (-1.5f, 1.5f, d[i]);
-        }
+        auto* d = buffer.getWritePointer (ch);
+        for (int i = 0; i < numSamples; ++i)
+            d[i] = juce::jlimit (-2.0f, 2.0f, d[i]);
     }
 }
 
@@ -391,43 +430,13 @@ void ReignitedAudioProcessor::updateEQFilters (float low01, float mid01, float h
 }
 
 //==============================================================================
-float ReignitedAudioProcessor::applyReignitedCharacter (float input, float reignited, float bandEmphasis)
+float ReignitedAudioProcessor::applyReignitedCharacter (float input, float dynDrive, float glueAmt, float r, float bandEmphasis)
 {
-    if (reignited < 0.001f)
+    if (r < 0.001f)
         return input; // completely bypass the character engine when knob is at 0
 
-    // =======================================================================
-    // === Reignited knob response curve (spec: slow at first, steep after ~70%)
-    // This mapping is critical for the "EQ → エフェクター" personality shift.
-    // =======================================================================
-    float r = reignited;
-
-    // Piecewise curve: flatter in the low-mid range, then accelerates hard.
-    // Made steeper overall for "もっと派手" request.
-    constexpr float knee          = 0.50f;
-    constexpr float lowScale      = 0.65f;
-    constexpr float highOffset    = 0.35f;
-    constexpr float highSteepness = 1.95f;
-
-    if (r < knee)
-        r = r * lowScale;
-    else
-        r = highOffset + (r - knee) * highSteepness;
-
-    // =======================================================================
-    // Amount mapping (these are the "SS strength" and "glue" controls)
-    // =======================================================================
-    // Increased ranges for more dramatic "派手" character as per feedback.
-    constexpr float minDrive   = 0.7f;
-    constexpr float maxDrive   = 7.5f;
-    constexpr float minGlue    = 0.0f;
-    constexpr float maxGlue    = 0.95f;
-
-    const float drive   = juce::jmap (r, 0.0f, 1.0f, minDrive, maxDrive);   // main saturation drive
-    const float glueAmt = juce::jmap (r, 0.0f, 1.0f, minGlue,  maxGlue);     // "Long Glue" amount
-
-    // Per-band push: stronger with "派手" tuning.
-    const float effectiveDrive = drive * (0.85f + bandEmphasis * 0.7f);
+    // Per-band push (dynDrive is already the modulated one from lookahead)
+    const float effectiveDrive = dynDrive;
 
     // -----------------------------------------------------------------------
     // Saturation stage (SS2 / "気持ちいい" character approximation)
@@ -438,14 +447,13 @@ float ReignitedAudioProcessor::applyReignitedCharacter (float input, float reign
     float sat = std::tanh (x * 0.88f) * 1.05f;
     sat += 0.18f * (x * x * (x > 0.0f ? 1.0f : -0.55f));   // boosted even harmonic bloom
 
-    // Less compensation so it gets dirtier/fatter when drive is high
-    float shaped = sat * (1.0f / juce::jmax (0.55f, effectiveDrive * 0.55f));
+    // Compensation with extra margin when laPeakSm high (to reduce peak intermediate levels
+    // and avoid DAW safety triggers on fast knob turns).
+    float denom = juce::jmax (0.55f, dynDrive * 0.55f * (1.0f + 0.3f * laPeakSm));
+    float shaped = sat * (1.0f / denom);
 
     // -----------------------------------------------------------------------
-    // "Long Glue" / bus glue stage
-    // Very slow envelope follower + gentle gain reduction.
-    // This is the part that "まとめる" the energy and gives cohesion.
-    // Now uses ms-based coefficients (set in prepareToPlay) for any sample rate.
+    // "Long Glue" / bus glue stage (ms-based, separate from short lookahead)
     // -----------------------------------------------------------------------
     const float absIn = std::abs (shaped);
 
@@ -477,6 +485,7 @@ float ReignitedAudioProcessor::applyReignitedCharacter (float input, float reign
     // Final parallel blend — reaches "full effector" faster and harder.
     // -----------------------------------------------------------------------
     const float charMix = juce::jmap (r, 0.0f, 1.0f, 0.12f, 0.99f);
+
     return input * (1.0f - charMix) + glued * charMix;
 }
 
