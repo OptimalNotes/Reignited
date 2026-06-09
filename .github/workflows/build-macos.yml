@@ -1,0 +1,38 @@
+name: Build macOS (VST3 + AU + Standalone)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install CMake
+      run: brew install cmake
+
+    - name: Configure
+      run: |
+        cmake -B build -G Xcode \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+
+    - name: Build
+      run: cmake --build build --config Release --parallel 4
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: Reignited-macOS
+        path: |
+          build/Reignited_artefacts/Release/Standalone/Reignited*.app
+          build/Reignited_artefacts/Release/VST3/Reignited*.vst3
+          build/Reignited_artefacts/Release/AU/Reignited*.component
+        retention-days: 30

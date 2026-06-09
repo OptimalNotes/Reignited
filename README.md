@@ -1,13 +1,13 @@
 # Reignited — C++ VST3 Reference Implementation
 
-このフォルダは「WebのGrokとCmajorで作っている本家プラグイン」の**C++参考実装**です。
+このフォルダは「WebのGrokとCmajorで作っている本家プラグイン」の**C++参考実装** です。
 
-いつもはGitHub上でCmajorコードを細かく仕様決めしながら進めてるけど、「いきなりここでC++で動くものを作って参考にしたい」というリクエストで作りました。
+いつもはGitHub上でCmajorコードを細かく仕様決めながら進めてるけど、「いきなりここでC++で動くものを作って参考にしたい」というリクエストで作りました。
 
 ## 現在のコンセプト（2026-06-08 妄想まとめより）
 
 - **プラグイン名**: Reignited
-- **コンセプト**: 「あの時の熱や勢いを取り戻す……かもしれない」エフェクター
+- **コンセプト**: 「あの時の熱や勢いを取り戻す…かもしれない」エフェクター
 - ギターやボーカルに挿して、ただEQをいじるだけで「なんかあの時の感じが戻ってきた」と思わせる。
 - 4バンドEQ（Low / Mid / High / Presence） + **5つ目のノブ「Reignited」** が本命。
 - Reignitedノブを回すと **EQの変化 + SSの強度（Long Glueなど） + MIX + 各帯域のGR感度** が連動して変化。
@@ -31,7 +31,7 @@
   - Mastering: LowShelf 90Hz / Mid Peak 420Hz / HighShelf 1.6kHz / Presence Peak 5.2kHz
 - Reignitedノブで以下のものが連動：
   - サチュレーション量（ドライブ + 軽い非対称波形整形 → even harmonics寄り）
-  - Long Glue（ゆっくりしたエンベロープフォロワーによる穏やかなバスグルー） — now ms-based for any sample rate
+  - Long Glue（ゆっくりしたエンベロープフォロワーによる積やかなバスグルー） — now ms-based for any sample rate
   - 自動的なEQ変化（Reignitedが上がるとMidを少しscooping、低域をtighten、Presenceをair寄りに）
   - 内部MIX（Reignitedが上がるほど「エフェクター」成分が増える）
 - Oversampling mode (4x when enabled) for the character engine
@@ -105,12 +105,22 @@ build\Reignited_artefacts\Release\Standalone\Reignited.exe   ← DAWなしで即
 - 「cl.exe が認識されません」→ Native Tools Command Prompt から実行するか、Developer Command Prompt for VS を起動してから cmake する。
 - Standaloneが起動しない → 依存DLLの問題は稀だが、Visual C++ Redistributable を最新にすると良い場合あり。
 
-まずは **Standalone** で音を出してReignitedノブをぐるぐる回してみるのが最短ルートです。
+まずは **Standalone** で音を出してReignitedノブをぐるぐる回してみるのが最短路ートです。
 
 ## macOS ビルド（AU / VST3 / Standalone）
 
 AU (Audio Unit) は macOS 専用フォーマットです。VST3 と Standalone も macOS でビルド可能です。
 
+### 手軽にMacバイナリを手に入れる方法（おすすめ）
+GitHub Actions で macOS ラナーを使って自動ビルドしています。
+- リポジトリの **Actions** タブを開く
+- 最新の "Build macOS" ワークフローを選ぶ
+- "Reignited-macOS" アーティファクトをダウンロード
+- 中に `Reignited (Time).vst3` と `Reignited (Time).component` があります
+
+これでMacを持っていなくても、Macユーザー向けのバイナリを簡単に手に入れられます。
+
+### 自分でビルドする場合
 ### 前提
 - macOS + Xcode (Command Line Tools もインストール: `xcode-select --install`)
 - CMake (Homebrew 推奨: `brew install cmake`)
@@ -156,7 +166,7 @@ cmake --build . --config Release
 
 - EQの正確な周波数 / Q / フィルタ種類（Low/Mid/High/Presenceの最適値）
 - SS2 / Long Glue のより正確な「気持ちいい」挙動の移植（Cmajorコードがあればここに参考として置きたい）
-- 各帯域ごとのGR感度の違いの強さ
+- 各帯域ごとのGR感度の違いの強弱
 - カット方向の味（ブーストとのバランス）
 - もっと高次のオーバーサンプリングや多段サチュが必要か
 
