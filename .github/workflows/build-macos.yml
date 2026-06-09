@@ -22,7 +22,8 @@ jobs:
       run: |
         cmake -B build -G Xcode \
           -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+          -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
 
     - name: Build
       run: cmake --build build --config Release --parallel 4
