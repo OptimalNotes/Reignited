@@ -14,7 +14,7 @@ include(FetchContent)
 FetchContent_Declare(
   juce
   GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
-  GIT_TAG        8.0.6    # Updated for macOS 15+ compatibility (ScreenCaptureKit instead of deprecated CGWindowListCreateImage)
+  GIT_TAG        8.0.13   # Latest JUCE 8 with full macOS 15+ / ScreenCaptureKit support
 )
 FetchContent_MakeAvailable(juce)
 
